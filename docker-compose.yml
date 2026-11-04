@@ -1,0 +1,92 @@
+name: autojob-ai
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://autojob:${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/autojob
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:?Copia .env.example a .env y configura SECRET_KEY}
+  ENVIRONMENT: production
+  INLINE_TASKS: "false"
+  CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  LOCAL_USER_ID: ${LOCAL_USER_ID:-}
+  CONTEXT_DIR: /workspace/context
+  STORAGE_DIR: /workspace/storage
+  TIMEZONE: ${TIMEZONE:-America/Bogota}
+  RETENTION_DAYS: ${RETENTION_DAYS:-90}
+  LLM_ENDPOINT: ${LLM_ENDPOINT:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-llama3.2}
+  LLM_PROVIDER: ${LLM_PROVIDER:-generic}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+  ENABLE_EMBEDDINGS: ${ENABLE_EMBEDDINGS:-false}
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: autojob
+      POSTGRES_USER: autojob
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autojob -d autojob"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+  backend:
+    build: ./backend
+    environment: *backend-env
+    ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - app-storage:/workspace/storage
+      - ./context:/workspace/context:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: ["celery", "-A", "app.workers.tasks:celery_app", "worker", "--loglevel=warning", "--concurrency=2"]
+    environment: *backend-env
+    volumes:
+      - app-storage:/workspace/storage
+      - ./context:/workspace/context:ro
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+  scheduler:
+    build: ./backend
+    command: ["python", "-m", "app.workers.scheduler"]
+    environment: *backend-env
+    volumes:
+      - app-storage:/workspace/storage
+      - ./context:/workspace/context:ro
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  postgres-data:
+  redis-data:
+  app-storage:

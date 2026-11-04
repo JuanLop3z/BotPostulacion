@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autojob-ai"
+version = "0.1.0"
+description = "Private, evidence-based job search and application assistant"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3", "sqlalchemy>=2.0.38,<2.1", "psycopg[binary]>=3.2,<4",
+  "alembic>=1.14,<2", "redis>=5,<7", "celery>=5.4,<6", "apscheduler>=3.11,<4",
+  "httpx>=0.28,<1", "PyMuPDF>=1.25,<2", "python-docx>=1.1,<2", "PyYAML>=6,<7",
+  "python-multipart>=0.0.20,<1", "cryptography>=44,<48",
+  "pgvector>=0.3,<1", "playwright>=1.51,<2"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1", "mypy>=1.15,<2", "types-PyYAML>=6", "types-python-dateutil>=2"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["browser: controlled Playwright integration (requires Chromium)"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true

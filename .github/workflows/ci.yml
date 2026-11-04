@@ -1,0 +1,59 @@
+name: quality
+on:
+  push:
+  pull_request:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: autojob_test
+          POSTGRES_USER: autojob
+          POSTGRES_PASSWORD: ci-test-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U autojob -d autojob_test"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    env:
+      DATABASE_URL: postgresql+psycopg://autojob:ci-test-only@localhost:5432/autojob_test
+      TEST_DATABASE_URL: postgresql+psycopg://autojob:ci-test-only@localhost:5432/autojob_test
+      SECRET_KEY: ci-only-secret-at-least-thirty-two-characters-123456
+      POSTGRES_PASSWORD: ci-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - run: pip install -c backend/requirements.lock -e 'backend[dev]'
+      - run: alembic -c backend/alembic.ini upgrade head
+      - run: alembic -c backend/alembic.ini check
+      - run: playwright install --with-deps chromium
+      - run: pytest backend/tests -q
+        env:
+          RUN_BROWSER_TESTS: '1'
+      - run: ruff check backend
+      - run: ruff format --check backend
+      - run: mypy backend/app
+      - run: docker compose config --quiet
+      - run: docker compose build backend
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm run build
+      - run: docker build --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 .
