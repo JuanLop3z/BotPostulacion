@@ -24,7 +24,14 @@ def client(tmp_path, monkeypatch) -> Iterator[TestClient]:
         with admin.begin() as connection:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-        engine = create_engine(postgres_url, connect_args={"options": f"-csearch_path={schema},public"})
+        # Public contains migrated tables and pgvector. A search_path alone lets
+        # create_all() see those tables and silently reuse them across fixtures.
+        # Qualify both DDL and ORM queries with the per-test schema instead.
+        engine = create_engine(
+            postgres_url,
+            connect_args={"options": f"-csearch_path={schema},public"},
+            execution_options={"schema_translate_map": {None: schema}},
+        )
     else:
         engine = create_engine(
             f"sqlite:///{tmp_path / 'tests.db'}", connect_args={"check_same_thread": False}
@@ -35,27 +42,30 @@ def client(tmp_path, monkeypatch) -> Iterator[TestClient]:
         if not postgres_url:
             connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    monkeypatch.setattr(database, "SessionLocal", sessions)
-    monkeypatch.setattr(get_settings(), "storage_dir", tmp_path / "storage")
-    monkeypatch.setattr(get_settings(), "inline_tasks", True)
-    monkeypatch.setattr(get_settings(), "llm_endpoint", "")
-    monkeypatch.setattr(get_settings(), "local_user_id", "")
+    try:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        monkeypatch.setattr(database, "SessionLocal", sessions)
+        monkeypatch.setattr(get_settings(), "storage_dir", tmp_path / "storage")
+        monkeypatch.setattr(get_settings(), "context_dir", tmp_path / "context")
+        monkeypatch.setattr(get_settings(), "inline_tasks", True)
+        monkeypatch.setattr(get_settings(), "llm_endpoint", "")
+        monkeypatch.setattr(get_settings(), "local_user_id", "")
 
-    def override_db():
-        with sessions() as db:
-            yield db
+        def override_db():
+            with sessions() as db:
+                yield db
 
-    app.dependency_overrides[get_db] = override_db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-    engine.dispose()
-    if admin:
-        with admin.begin() as connection:
-            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
-        admin.dispose()
+        app.dependency_overrides[get_db] = override_db
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+        if admin:
+            with admin.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            admin.dispose()
 
 
 @pytest.fixture
